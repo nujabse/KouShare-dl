@@ -1,6 +1,8 @@
 package user
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +15,8 @@ import (
 	"time"
 
 	"github.com/tidwall/gjson"
+	"github.com/yliu7949/KouShare-dl/internal/config"
+	"github.com/yliu7949/KouShare-dl/internal/kssign"
 	"github.com/yliu7949/KouShare-dl/internal/proxy"
 )
 
@@ -64,7 +68,7 @@ func (u *User) LoadToken() {
 
 // Login 使用短信验证码的方式登录“蔻享学术”平台，登录成功后获得token，并将token保存在可执行文件所在路径下的token文件中
 func (u *User) Login() error {
-	URL := "https://login.koushare.com/api/api-user/"
+	URL := config.LoginBaseURL() + "/api/api-user/"
 	res1, err := proxy.Client.PostForm(URL+"sendSms", url.Values{"phone": {u.PhoneNumber}, "scope": {"LOGIN"}})
 	if err != nil {
 		return err
@@ -153,15 +157,31 @@ func saveToken(cookie http.Cookie) error {
 
 // MyGetRequest 这是一个自定义的Get请求，约定：可变参数headers仅允许传入一个设置header的map。
 func MyGetRequest(url string, headers ...map[string]string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	return MyRequest(http.MethodGet, url, nil, headers...)
+}
+
+// MyRequest is a custom HTTP request helper. It also supports KouShare's newer
+// signed API (api-core.koushare.com) by adding Ks-Sign / Ks-Timestamp headers.
+//
+// Note: body should be the raw request body bytes (e.g. JSON "{}"), not URL-encoded params.
+func MyRequest(method string, urlStr string, body []byte, headers ...map[string]string) (string, error) {
+	var bodyReader io.Reader
+	if len(body) != 0 {
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, urlStr, bodyReader)
 	if err != nil {
 		return "", err
 	}
+
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
-	req.Header.Set("Referer", "https://www.koushare.com/")
+	req.Header.Set("Referer", config.WebBaseURL()+"/")
+	req.Header.Set("Origin", config.WebBaseURL())
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+
 	if u.LoginState == 1 { //如果token有效，则添加cookie请求头
 		req.Header.Set("Cookie", "Token="+u.Token)
 	}
@@ -169,6 +189,22 @@ func MyGetRequest(url string, headers ...map[string]string) (string, error) {
 		for key, value := range headers[0] {
 			req.Header.Set(key, value)
 		}
+	}
+
+	// Newer KouShare endpoints (e.g. api-core.koushare.com) require signed requests.
+	if strings.Contains(req.URL.Host, "api-core.koushare.com") {
+		req.Header.Set("Client", "front_web")
+		if req.Header.Get("Content-Type") == "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		params := parseJSONBodyParams(body)
+		for k, v := range kssign.ParseQueryLikeFrontend(req.URL.RawQuery) {
+			params[k] = v
+		}
+		sign, ts := kssign.Sign(params, req.Method)
+		req.Header.Set("Ks-Sign", sign)
+		req.Header.Set("Ks-Timestamp", strconv.FormatInt(ts, 10))
 	}
 
 	resp, err := proxy.Client.Do(req)
@@ -184,4 +220,48 @@ func MyGetRequest(url string, headers ...map[string]string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func parseJSONBodyParams(body []byte) map[string]string {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return map[string]string{}
+	}
+	if body[0] != '{' || body[len(body)-1] != '}' {
+		return map[string]string{}
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return map[string]string{}
+	}
+
+	out := make(map[string]string, len(obj))
+	for k, v := range obj {
+		if v == nil {
+			continue
+		}
+		switch vv := v.(type) {
+		case string:
+			if vv == "" {
+				continue
+			}
+			out[k] = vv
+		case bool:
+			out[k] = strconv.FormatBool(vv)
+		case float64:
+			out[k] = strconv.FormatFloat(vv, 'f', -1, 64)
+		default:
+			b, err := json.Marshal(v)
+			if err != nil {
+				continue
+			}
+			s := string(b)
+			if s == "" || s == "null" {
+				continue
+			}
+			out[k] = s
+		}
+	}
+	return out
 }

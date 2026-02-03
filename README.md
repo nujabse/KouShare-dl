@@ -156,6 +156,9 @@ KouShare-dl 程序的命令具有下面的格式：
   -p, --path        指定保存文件的路径（若不指定，则默认为该程序当前所在的路径）
   -p, --path        指定清理临时文件的路径（若不指定，则默认为该程序当前所在的路径）
   -P, --proxy       指定使用的http/https/socks5代理服务地址
+      --api-base    指定蔻享 API Base（默认 https://api.koushare.com，可用环境变量 KOUSHARE_API_BASE）
+      --web-base    指定蔻享 Web Base（默认 https://www.koushare.com，可用环境变量 KOUSHARE_WEB_BASE）
+      --login-base  指定蔻享登录 API Base（默认 https://login.koushare.com，可用环境变量 KOUSHARE_LOGIN_BASE）
   -q, --quality     指定下载视频的清晰度（high为超清，standard为高清，low为标清，不指定则默认为超清）
   -q, --quiet       指定是否不输出清理过程中的信息
       --qpdf-bin    指定qpdf的bin文件夹所在的路径（注：该flag无简写形式）
@@ -351,6 +354,7 @@ https://www.koushare.com/lives/room/676216
 |   `-p`   |   `--path`    |        指定保存录制视频的路径         | `String` | 当前所在路径 |
 |   `-r`   |  `--replay`   |    指定是否下载直播间快速回放视频     |  `Bool`  |      否      |
 |          | `--password`  |            指定直播间密码             | `String` |              |
+|          | `--videoId`   |   指定回放对应的 videoId（新接口可能需要）  | `String` |              |
 
 合并下载的`.ts`视频片段使用`ks merge <directory> <flags> `命令。与`merge`对应的 flag 有一个：
 
@@ -440,6 +444,12 @@ ks live 447482 -r -p "C:\Users\lenovo\Desktop"
 ```bash
 ks live 447482 -r --path="C:\Users\lenovo\Desktop"
 ```
+
+> 备注：如果旧的 `api.koushare.com` 无法解析，可以尝试使用新域名并指定 `videoId` 下载回放，例如：
+>
+> `ks --api-base "https://api-core.koushare.com" live 49392 -r --videoId 197212 -p ./downloads`
+>
+> 该方式会调用 `ffmpeg` 下载并解密 HLS（请确保已安装 `ffmpeg` 且在 PATH 中）。
 
 ## 五、下载课件
 

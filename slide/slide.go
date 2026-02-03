@@ -2,12 +2,13 @@ package slide
 
 import (
 	"fmt"
-	"github.com/yliu7949/KouShare-dl/internal/proxy"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/tidwall/gjson"
+	"github.com/yliu7949/KouShare-dl/internal/config"
+	"github.com/yliu7949/KouShare-dl/internal/proxy"
 	"github.com/yliu7949/KouShare-dl/user"
 )
 
@@ -38,7 +39,7 @@ func (s *Slide) DownloadSingleSlide() {
 		return
 	}
 	if _, err := os.Stat(s.SaveDir); os.IsNotExist(err) {
-		if err := os.Mkdir("ok", os.ModePerm); err != nil {
+		if err := os.MkdirAll(s.SaveDir, os.ModePerm); err != nil {
 			fmt.Println("创建下载文件夹失败：", err)
 			return
 		}
@@ -87,7 +88,7 @@ func (s *Slide) DownloadSeriesSlides() {
 }
 
 func (s *Slide) getSlideInfo() bool {
-	URL := "https://api.koushare.com/api/api-video/getVideoById?vid=" + s.Vid + "&related=3&allData=1&password="
+	URL := config.APIBaseURL() + "/api/api-video/getVideoById?vid=" + s.Vid + "&related=3&allData=1&password="
 	str, err := user.MyGetRequest(URL)
 	if err != nil {
 		fmt.Println("Get请求出错：", err)
@@ -114,9 +115,9 @@ func (s *Slide) findSeriesSlides() {
 
 	var URL string
 	if s.svpid != "0" { //判断是否存在子专题视频
-		URL = "https://api.koushare.com/api/api-video/getAllVideoBySeriesSub?svpid=" + s.svpid
+		URL = config.APIBaseURL() + "/api/api-video/getAllVideoBySeriesSub?svpid=" + s.svpid
 	} else {
-		URL = "https://api.koushare.com/api/api-video/getSeriesVideo?svid=" + s.svid
+		URL = config.APIBaseURL() + "/api/api-video/getSeriesVideo?svid=" + s.svid
 	}
 
 	if str, err := user.MyGetRequest(URL); err != nil {

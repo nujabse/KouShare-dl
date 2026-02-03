@@ -14,6 +14,7 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/yliu7949/KouShare-dl/internal/color"
+	"github.com/yliu7949/KouShare-dl/internal/config"
 	"github.com/yliu7949/KouShare-dl/internal/proxy"
 	"github.com/yliu7949/KouShare-dl/user"
 )
@@ -22,6 +23,7 @@ import (
 type Live struct {
 	lid            string
 	RoomID         string
+	VideoID        string // 回放接口可能需要的 videoId
 	isLive         string // 值为0表示直播未开始；值为1表示正在进行直播；值为2表示直播已结束；值为3表示录播视频已上线。
 	title          string
 	date           string // 开播时间
@@ -117,7 +119,7 @@ func (l *Live) WaitAndRecordTheLive(liveTime string, autoMerge bool) {
 			msg = "直播已结束。"
 			if l.quickReplayURL != "" {
 				msg += fmt.Sprintf(`快速回放视频已上线，访问 %s 观看快速回放或使用“ks record %s --replay”命令下载快速回放视频。`,
-					`https://www.koushare.com/lives/room/`+l.RoomID, l.RoomID)
+					config.WebBaseURL()+`/lives/room/`+l.RoomID, l.RoomID)
 			} else if l.playback == "0" {
 				msg += "本场直播无回放。"
 			} else if l.playback == "1" {
@@ -146,7 +148,7 @@ func (l *Live) WaitAndRecordTheLive(liveTime string, autoMerge bool) {
 }
 
 func (l *Live) getLidByRoomID() bool {
-	URL := "https://api.koushare.com/api/api-live/getLidByRoomid?roomid=" + l.RoomID
+	URL := config.APIBaseURL() + "/api/api-live/getLidByRoomid?roomid=" + l.RoomID
 	str, err := user.MyGetRequest(URL)
 	if err != nil {
 		fmt.Println("Get请求出错：", err)
@@ -160,7 +162,7 @@ func (l *Live) getLidByRoomID() bool {
 }
 
 func (l *Live) checkLiveStatus() {
-	URL := "https://api.koushare.com/api/api-live/checkLiveStatus?initial=1&lid=" + l.lid
+	URL := config.APIBaseURL() + "/api/api-live/checkLiveStatus?initial=1&lid=" + l.lid
 	if str, err := user.MyGetRequest(URL); err != nil {
 		fmt.Println("Get请求出错：", err)
 	} else {
@@ -170,9 +172,10 @@ func (l *Live) checkLiveStatus() {
 }
 
 func (l *Live) getLiveByRoomID(chooseHighQuality bool) {
-	URL := "https://api.koushare.com/api/api-live/getLiveByRoomid?roomid=" + l.RoomID + "&allData=1"
+	URL := config.APIBaseURL() + "/api/api-live/getLiveByRoomid?roomid=" + l.RoomID + "&allData=1"
 	if l.needPassword == "1" {
-		URL = fmt.Sprintf("https://api.koushare.com/api/api-live/getLiveByRoomid?roomid=%s&password=%s&allData=1",
+		URL = fmt.Sprintf("%s/api/api-live/getLiveByRoomid?roomid=%s&password=%s&allData=1",
+			config.APIBaseURL(),
 			l.RoomID, l.Password)
 	}
 
@@ -277,6 +280,13 @@ func (l *Live) getNewTsURLBym3u8() {
 }
 
 func (l *Live) downloadTsFile() {
+	if l.SaveDir != "" {
+		if err := os.MkdirAll(l.SaveDir, os.ModePerm); err != nil {
+			fmt.Println("创建下载文件夹失败：", err)
+			return
+		}
+	}
+
 	req, err := http.NewRequest(http.MethodGet, l.newTsURL, nil)
 	if err != nil {
 		fmt.Println(err.Error())
@@ -286,9 +296,8 @@ func (l *Live) downloadTsFile() {
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	req.Header.Set("Accept-Language", "zh-CN")
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Host", "live.am-stc.cn")
-	req.Header.Set("Origin", "https://www.koushare.com")
-	req.Header.Set("Referer", "https://www.koushare.com")
+	req.Header.Set("Origin", config.WebBaseURL())
+	req.Header.Set("Referer", config.WebBaseURL())
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
 	resp, _ := proxy.Client.Do(req)
 	defer func() {
@@ -317,6 +326,13 @@ func (l *Live) downloadTsFile() {
 }
 
 func (l *Live) downloadAndMergeTsFile() {
+	if l.SaveDir != "" {
+		if err := os.MkdirAll(l.SaveDir, os.ModePerm); err != nil {
+			fmt.Println("创建下载文件夹失败：", err)
+			return
+		}
+	}
+
 	req, err := http.NewRequest(http.MethodGet, l.newTsURL, nil)
 	if err != nil {
 		fmt.Println(err.Error())
@@ -326,9 +342,8 @@ func (l *Live) downloadAndMergeTsFile() {
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	req.Header.Set("Accept-Language", "zh-CN")
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Host", "live.am-stc.cn")
-	req.Header.Set("Origin", "https://www.koushare.com")
-	req.Header.Set("Referer", "https://www.koushare.com")
+	req.Header.Set("Origin", config.WebBaseURL())
+	req.Header.Set("Referer", config.WebBaseURL())
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
 	resp, _ := proxy.Client.Do(req)
 	defer func() {
@@ -341,7 +356,18 @@ func (l *Live) downloadAndMergeTsFile() {
 	// 过滤视频标题中的不合法字符
 	reg, _ := regexp.Compile(`[\\/:*?"<>|]`)
 	title := reg.ReplaceAllString(l.title, "")
-	fileName := l.SaveDir + fmt.Sprintf("%s_%s.ts", title, strings.Replace(l.date, ":", "_", -1))
+	if title == "" {
+		if l.VideoID != "" {
+			title = "replay_" + l.VideoID
+		} else {
+			title = "replay_" + l.RoomID
+		}
+	}
+	datePart := strings.Replace(l.date, ":", "_", -1)
+	if strings.TrimSpace(datePart) == "" {
+		datePart = time.Now().Format("2006-01-02_15-04-05")
+	}
+	fileName := l.SaveDir + fmt.Sprintf("%s_%s.ts", title, datePart)
 	dstFile, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		fmt.Println(err.Error())

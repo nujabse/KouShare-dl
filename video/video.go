@@ -15,6 +15,7 @@ import (
 
 	"github.com/tidwall/gjson"
 	"github.com/yliu7949/KouShare-dl/internal/color"
+	"github.com/yliu7949/KouShare-dl/internal/config"
 	"github.com/yliu7949/KouShare-dl/internal/proxy"
 	"github.com/yliu7949/KouShare-dl/user"
 )
@@ -218,7 +219,7 @@ func (v *Video) DownloadSeriesVideos(quality string) {
 
 // GetVideoInfo 获取视频的基本信息
 func (v *Video) GetVideoInfo() bool {
-	URL := "https://api.koushare.com/api/api-video/getVideoById?vid=" + v.Vid + "&related=3&allData=1&password="
+	URL := config.APIBaseURL() + "/api/api-video/getVideoById?vid=" + v.Vid + "&related=3&allData=1&password="
 	str, err := user.MyGetRequest(URL)
 	if err != nil {
 		fmt.Println("Get请求出错：", err)
@@ -371,9 +372,9 @@ func (v *Video) findSeriesVideos() {
 
 	var URL string
 	if v.svpid != "0" { //判断是否存在子专题视频
-		URL = "https://api.koushare.com/api/api-video/getAllVideoBySeriesSub?svpid=" + v.svpid
+		URL = config.APIBaseURL() + "/api/api-video/getAllVideoBySeriesSub?svpid=" + v.svpid
 	} else {
-		URL = "https://api.koushare.com/api/api-video/getSeriesVideo?svid=" + v.svid
+		URL = config.APIBaseURL() + "/api/api-video/getSeriesVideo?svid=" + v.svid
 	}
 
 	if str, err := user.MyGetRequest(URL); err != nil {

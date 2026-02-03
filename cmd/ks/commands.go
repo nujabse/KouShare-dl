@@ -106,6 +106,7 @@ func RecordCmd() *cobra.Command {
 	var autoMerge bool
 	var replay bool
 	var password string
+	var videoID string
 
 	var cmdRecord = &cobra.Command{
 		Use:   "record [roomID]",
@@ -119,6 +120,7 @@ func RecordCmd() *cobra.Command {
 			}
 			l.SaveDir = path
 			l.Password = password
+			l.VideoID = videoID
 			if !replay {
 				l.WaitAndRecordTheLive(liveTime, autoMerge)
 			} else {
@@ -132,6 +134,7 @@ func RecordCmd() *cobra.Command {
 	cmdRecord.Flags().BoolVarP(&autoMerge, "autoMerge", "a", false, "指定是否自动合并下载的视频片段文件")
 	cmdRecord.Flags().BoolVarP(&replay, "replay", "r", false, "指定是否下载直播间快速回放视频")
 	cmdRecord.Flags().StringVar(&password, "password", "", "指定直播间密码")
+	cmdRecord.Flags().StringVar(&videoID, "videoId", "", "指定回放对应的 videoId（新接口可能需要，示例：--videoId 197212）")
 
 	return cmdRecord
 }

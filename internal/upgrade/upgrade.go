@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/yliu7949/KouShare-dl/internal/color"
 	"github.com/yliu7949/KouShare-dl/internal/proxy"
@@ -33,8 +34,11 @@ func init() {
 // GetLatestVersion 获取最新的KouShare-dl版本号
 func GetLatestVersion() string {
 	_ = os.Remove(ksOldFile)
-	latestVersion, _ := net.LookupTXT("ks-version.gleamoe.com")
-	return latestVersion[0]
+	latestVersion, err := net.LookupTXT("ks-version.gleamoe.com")
+	if err != nil || len(latestVersion) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(latestVersion[0])
 }
 
 // Upgrade 查询并升级KouShare-dl至最新版本
