@@ -500,6 +500,17 @@ ks slide 7405 --qpdf-bin=C:\Downloads\qpdf-10.1.0\bin\
 
 # FAQ
 
+#### `api.koushare.com` 无法解析（no such host）导致无法下载怎么办？
+蔻享的部分新接口已迁移到 `api-core.koushare.com`。你可以通过全局参数 `--api-base` 指定新的 API Base。
+
+如果你是在下载“直播快速回放”，通常需要同时指定 `roomID` 与 `videoId`（可从回放页面 URL 的 `?vid=...` 获得），例如：
+
+```bash
+ks --api-base "https://api-core.koushare.com" live 49392 -r --videoId 197212 -p ./downloads
+```
+
+该方式会调用 `ffmpeg` 下载并解密 HLS（请确保已安装 `ffmpeg` 且在 PATH 中）。
+
 #### KouShare-dl 下载视频时是并行下载吗？
 不是并行下载。
 
