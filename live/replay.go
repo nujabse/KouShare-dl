@@ -1,17 +1,21 @@
 package live
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tidwall/gjson"
+	"github.com/yliu7949/KouShare-dl/internal/color"
 	"github.com/yliu7949/KouShare-dl/internal/config"
 	"github.com/yliu7949/KouShare-dl/user"
 )
@@ -65,6 +69,11 @@ func (l *Live) downloadReplayViaAPICore() {
 		}
 	}
 
+	l.tryPopulateLiveMetaFromAPICore()
+	if strings.TrimSpace(l.title) != "" {
+		fmt.Printf("回放标题：%s\n", color.Emphasize(l.title))
+	}
+
 	playbackURL := config.APIBaseURL() + "/live/v2/live/playback/" + l.RoomID + "?videoId=" + url.QueryEscape(l.VideoID)
 	resp, err := user.MyRequest(http.MethodPost, playbackURL, []byte("{}"))
 	if err != nil {
@@ -99,7 +108,12 @@ func (l *Live) downloadReplayViaAPICore() {
 		return
 	}
 
-	outputName := fmt.Sprintf("replay_room%s_vid%s_%sp_%s.mp4",
+	titlePart := sanitizeFilePart(l.title)
+	if titlePart != "" {
+		titlePart += "_"
+	}
+	outputName := fmt.Sprintf("%sreplay_room%s_vid%s_%sp_%s.mp4",
+		titlePart,
 		l.RoomID,
 		l.VideoID,
 		strconv.FormatInt(bestHeight, 10),
@@ -107,6 +121,7 @@ func (l *Live) downloadReplayViaAPICore() {
 	)
 	outputPath := filepath.Join(l.SaveDir, outputName)
 
+	fmt.Printf("清晰度：%sp\n", strconv.FormatInt(bestHeight, 10))
 	if err := downloadHLSWithFFmpeg(bestURL, outputPath); err != nil {
 		fmt.Println("ffmpeg 下载失败：", err)
 		return
@@ -122,18 +137,220 @@ func downloadHLSWithFFmpeg(m3u8URL string, outputPath string) error {
 	headers := "Referer: " + config.WebBaseURL() + "/\r\n" +
 		"User-Agent: Mozilla/5.0\r\n"
 
+	totalDurationSec := probeDurationSeconds(m3u8URL, headers)
+	if totalDurationSec > 0 {
+		fmt.Printf("总时长：%s\n", formatDurationSeconds(totalDurationSec))
+	}
+	fmt.Println("开始下载（显示总进度与速度）...")
+
 	cmd := exec.Command(
 		"ffmpeg",
 		"-hide_banner",
 		"-y",
+		"-loglevel", "error",
+		"-nostats",
+		"-progress", "pipe:1",
 		"-headers", headers,
 		"-i", m3u8URL,
 		"-c", "copy",
 		outputPath,
 	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	var stderrBuf bytes.Buffer
+	go func() {
+		_, _ = stderrBuf.ReadFrom(stderr)
+	}()
+
+	startWall := time.Now()
+	var lastPrint time.Time
+	var lastSpeed string
+	var lastOutTimeMS int64
+	var lastTotalSize int64
+
+	printProgress := func(force bool) {
+		if !force && time.Since(lastPrint) < 200*time.Millisecond {
+			return
+		}
+		lastPrint = time.Now()
+
+		percentStr := "--"
+		if totalDurationSec > 0 && lastOutTimeMS > 0 {
+			p := float64(lastOutTimeMS) / (totalDurationSec * 1000.0) * 100.0
+			if p < 0 {
+				p = 0
+			}
+			if p > 100 {
+				p = 100
+			}
+			percentStr = fmt.Sprintf("%.2f", p)
+		}
+
+		speedStr := strings.TrimSpace(lastSpeed)
+		if speedStr == "" {
+			speedStr = "--"
+		}
+
+		rateStr := ""
+		elapsed := time.Since(startWall).Seconds()
+		if elapsed > 1 && lastTotalSize > 0 {
+			mbps := (float64(lastTotalSize) / 1024.0 / 1024.0) / elapsed
+			rateStr = fmt.Sprintf(" %.2fMB/s", mbps)
+		}
+
+		fmt.Printf("\r进度: %s%% 速度: %s%s", percentStr, speedStr, rateStr)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "out_time_ms":
+			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
+				// ffmpeg reports microseconds here despite the name
+				lastOutTimeMS = v / 1000
+			}
+		case "out_time_us":
+			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
+				lastOutTimeMS = v / 1000
+			}
+		case "total_size":
+			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
+				lastTotalSize = v
+			}
+		case "speed":
+			lastSpeed = value
+		case "progress":
+			printProgress(true)
+			if value == "end" {
+				fmt.Print("\n")
+			}
+		}
+		printProgress(false)
+	}
+	_ = scanner.Err()
+
+	if err := cmd.Wait(); err != nil {
+		msg := strings.TrimSpace(stderrBuf.String())
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%v: %s", err, msg)
+	}
+
+	printProgress(true)
+	fmt.Print("\n")
+	return nil
+}
+
+func probeDurationSeconds(m3u8URL string, headers string) float64 {
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		return 0
+	}
+	out, err := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-headers", headers,
+		"-show_entries", "format=duration",
+		"-of", "default=nw=1:nk=1",
+		m3u8URL,
+	).Output()
+	if err != nil {
+		return 0
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return 0
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+func formatDurationSeconds(sec float64) string {
+	if sec <= 0 {
+		return "未知"
+	}
+	d := time.Duration(sec * float64(time.Second))
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+}
+
+func sanitizeFilePart(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	reg, _ := regexp.Compile(`[\\/:*?"<>|]`)
+	s = reg.ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// avoid insanely long filenames
+	if len([]rune(s)) > 80 {
+		s = string([]rune(s)[:80])
+	}
+	return s
+}
+
+func (l *Live) tryPopulateLiveMetaFromAPICore() {
+	if strings.TrimSpace(l.RoomID) == "" {
+		return
+	}
+	urlStr := config.APIBaseURL() + "/live/v2/live/" + l.RoomID
+	resp, err := user.MyGetRequest(urlStr)
+	if err != nil {
+		return
+	}
+	if gjson.Get(resp, "code").Int() != 200000 {
+		return
+	}
+	l.title = firstNonEmpty(
+		gjson.Get(resp, "data.title").String(),
+		gjson.Get(resp, "data.ltitle").String(),
+		gjson.Get(resp, "data.liveTitle").String(),
+		gjson.Get(resp, "data.name").String(),
+	)
+	l.date = firstNonEmpty(
+		gjson.Get(resp, "data.livedate").String(),
+		gjson.Get(resp, "data.liveDate").String(),
+		gjson.Get(resp, "data.date").String(),
+	)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // recordVOD 根据点播模式的m3u8文件下载快速回放视频
