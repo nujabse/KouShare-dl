@@ -174,11 +174,9 @@ func downloadHLSWithFFmpeg(m3u8URL string, outputPath string) error {
 		_, _ = stderrBuf.ReadFrom(stderr)
 	}()
 
-	startWall := time.Now()
 	var lastPrint time.Time
 	var lastSpeed string
 	var lastOutTimeMS int64
-	var lastTotalSize int64
 
 	printProgress := func(force bool) {
 		if !force && time.Since(lastPrint) < 200*time.Millisecond {
@@ -203,14 +201,7 @@ func downloadHLSWithFFmpeg(m3u8URL string, outputPath string) error {
 			speedStr = "--"
 		}
 
-		rateStr := ""
-		elapsed := time.Since(startWall).Seconds()
-		if elapsed > 1 && lastTotalSize > 0 {
-			mbps := (float64(lastTotalSize) / 1024.0 / 1024.0) / elapsed
-			rateStr = fmt.Sprintf(" %.2fMB/s", mbps)
-		}
-
-		fmt.Printf("\r进度: %s%% 速度: %s%s", percentStr, speedStr, rateStr)
+		fmt.Printf("\r进度: %s%% 速度: %s", percentStr, speedStr)
 	}
 
 	scanner := bufio.NewScanner(stdout)
@@ -232,10 +223,6 @@ func downloadHLSWithFFmpeg(m3u8URL string, outputPath string) error {
 		case "out_time_us":
 			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
 				lastOutTimeMS = v / 1000
-			}
-		case "total_size":
-			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
-				lastTotalSize = v
 			}
 		case "speed":
 			lastSpeed = value
