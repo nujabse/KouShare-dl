@@ -264,7 +264,7 @@ func downloadHLSWithFFmpeg(m3u8URL string, outputPath string) error {
 
 func probeDurationSeconds(m3u8URL string, headers string) float64 {
 	if _, err := exec.LookPath("ffprobe"); err != nil {
-		return 0
+		return probeDurationSecondsFromM3U8(m3u8URL)
 	}
 	out, err := exec.Command(
 		"ffprobe",
@@ -283,7 +283,10 @@ func probeDurationSeconds(m3u8URL string, headers string) float64 {
 	}
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0
+		return probeDurationSecondsFromM3U8(m3u8URL)
+	}
+	if v <= 0 {
+		return probeDurationSecondsFromM3U8(m3u8URL)
 	}
 	return v
 }
@@ -299,6 +302,58 @@ func formatDurationSeconds(sec float64) string {
 	d -= m * time.Minute
 	s := d / time.Second
 	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+}
+
+func probeDurationSecondsFromM3U8(m3u8URL string) float64 {
+	const maxDepth = 3
+	cur := m3u8URL
+
+	for depth := 0; depth < maxDepth; depth++ {
+		text, err := user.MyGetRequest(cur, map[string]string{"Accept": "*/*"})
+		if err != nil {
+			return 0
+		}
+
+		var sum float64
+		hasExtinf := false
+		lines := strings.Split(text, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#EXTINF:") {
+				hasExtinf = true
+				v := strings.TrimPrefix(line, "#EXTINF:")
+				if idx := strings.IndexByte(v, ','); idx >= 0 {
+					v = v[:idx]
+				}
+				if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+					sum += f
+				}
+			}
+		}
+		if hasExtinf && sum > 0 {
+			return sum
+		}
+
+		next := ""
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.Contains(line, ".m3u8") {
+				if resolved, ok := resolveURL(cur, line); ok {
+					next = resolved
+					break
+				}
+			}
+		}
+		if next == "" {
+			return 0
+		}
+		cur = next
+	}
+
+	return 0
 }
 
 func sanitizeFilePart(s string) string {
