@@ -137,24 +137,25 @@ func downloadHLSWithFFmpeg(m3u8URL string, outputPath string) error {
 	headers := "Referer: " + config.WebBaseURL() + "/\r\n" +
 		"User-Agent: Mozilla/5.0\r\n"
 
-	totalDurationSec := probeDurationSeconds(m3u8URL, headers)
+	useHeaders := isHTTPURL(m3u8URL)
+	totalDurationSec := probeDurationSeconds(m3u8URL, headers, useHeaders)
 	if totalDurationSec > 0 {
 		fmt.Printf("总时长：%s\n", formatDurationSeconds(totalDurationSec))
 	}
 	fmt.Println("开始下载（显示总进度与速度）...")
 
-	cmd := exec.Command(
-		"ffmpeg",
+	args := []string{
 		"-hide_banner",
 		"-y",
 		"-loglevel", "error",
 		"-nostats",
 		"-progress", "pipe:1",
-		"-headers", headers,
-		"-i", m3u8URL,
-		"-c", "copy",
-		outputPath,
-	)
+	}
+	if useHeaders {
+		args = append(args, "-headers", headers)
+	}
+	args = append(args, "-i", m3u8URL, "-c", "copy", outputPath)
+	cmd := exec.Command("ffmpeg", args...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -249,18 +250,20 @@ func downloadHLSWithFFmpeg(m3u8URL string, outputPath string) error {
 	return nil
 }
 
-func probeDurationSeconds(m3u8URL string, headers string) float64 {
+func probeDurationSeconds(m3u8URL string, headers string, useHeaders bool) float64 {
 	if _, err := exec.LookPath("ffprobe"); err != nil {
 		return probeDurationSecondsFromM3U8(m3u8URL)
 	}
-	out, err := exec.Command(
-		"ffprobe",
+	args := []string{
 		"-v", "error",
-		"-headers", headers,
 		"-show_entries", "format=duration",
 		"-of", "default=nw=1:nk=1",
-		m3u8URL,
-	).Output()
+	}
+	if useHeaders {
+		args = append(args, "-headers", headers)
+	}
+	args = append(args, m3u8URL)
+	out, err := exec.Command("ffprobe", args...).Output()
 	if err != nil {
 		return 0
 	}
@@ -276,6 +279,14 @@ func probeDurationSeconds(m3u8URL string, headers string) float64 {
 		return probeDurationSecondsFromM3U8(m3u8URL)
 	}
 	return v
+}
+
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u == nil {
+		return strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://")
+	}
+	return u.Scheme == "http" || u.Scheme == "https"
 }
 
 func formatDurationSeconds(sec float64) string {
